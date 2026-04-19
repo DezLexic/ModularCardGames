@@ -30,9 +30,10 @@ class TestCreate:
 class TestGetState:
     def test_get_state_returns_game_and_state(self, store):
         session_id, _ = store.create("blackjack")
+        from core.base_game import BaseGame
         game, state = store.get_state(session_id)
-        assert state is not None
-        assert game is not None
+        assert isinstance(game, BaseGame)
+        assert state.phase == "PLAYER_TURN"
 
     def test_get_state_unknown_id_raises(self, store):
         with pytest.raises(SessionNotFoundError):
@@ -40,6 +41,12 @@ class TestGetState:
 
 
 class TestApplyAction:
+    def test_apply_action_updates_stored_state(self, store):
+        session_id, _ = store.create("blackjack")
+        _, new_state = store.apply_action(session_id, "HIT")
+        _, stored_state = store.get_state(session_id)
+        assert stored_state is new_state
+
     def test_apply_valid_action_returns_new_state(self, store):
         session_id, _ = store.create("blackjack")
         game, state = store.apply_action(session_id, "HIT")
@@ -52,7 +59,7 @@ class TestApplyAction:
 
     def test_apply_wrong_phase_action_raises(self, store):
         session_id, _ = store.create("blackjack")
-        with pytest.raises(InvalidActionError):
+        with pytest.raises(InvalidActionError, match="not valid in this phase"):
             store.apply_action(session_id, "CALL")  # CALL is Texas Hold'em only
 
     def test_apply_action_unknown_session_raises(self, store):

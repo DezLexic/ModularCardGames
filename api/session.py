@@ -36,7 +36,7 @@ class SessionStore:
     def get_state(self, session_id: str) -> tuple[BaseGame, GameState]:
         entry = self._sessions.get(session_id)
         if entry is None:
-            raise SessionNotFoundError(session_id)
+            raise SessionNotFoundError(f"Session '{session_id}' not found")
         return entry
 
     def apply_action(self, session_id: str, action_str: str) -> tuple[BaseGame, GameState]:
@@ -53,7 +53,7 @@ class SessionStore:
 
     def delete(self, session_id: str) -> None:
         if session_id not in self._sessions:
-            raise SessionNotFoundError(session_id)
+            raise SessionNotFoundError(f"Session '{session_id}' not found")
         del self._sessions[session_id]
 
     def __len__(self) -> int:
