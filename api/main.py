@@ -16,6 +16,7 @@ from api.models import (
 )
 from api.session import (
     InvalidActionError,
+    SessionCapError,
     SessionNotFoundError,
     SessionStore,
     UnknownGameError,
@@ -35,9 +36,14 @@ def get_games() -> GamesResponse:
 def create_session(body: CreateSessionRequest) -> CreateSessionResponse:
     try:
         session_id, state = _store.create(body.game)
+    except SessionCapError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except UnknownGameError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    game, _ = _store.get_state(session_id)
+    try:
+        game, _ = _store.get_state(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=500, detail="Session unavailable after creation")
     return CreateSessionResponse(
         session_id=session_id,
         state=build_state_response(session_id, state, game),

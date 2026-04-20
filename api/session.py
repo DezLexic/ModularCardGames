@@ -49,6 +49,7 @@ class SessionStore:
         if entry is None:
             raise SessionNotFoundError(f"Session '{session_id}' not found")
         game, state, _ = entry
+        self._sessions[session_id] = (game, state, time.monotonic())
         return game, state
 
     def apply_action(self, session_id: str, action_str: str) -> tuple[BaseGame, GameState]:

@@ -109,3 +109,11 @@ class TestTTLAndCap:
         store.apply_action(session_id, "HIT")
         _, _, ts_after = store._sessions[session_id]
         assert ts_after > ts_before
+
+    def test_get_state_updates_last_accessed(self, store):
+        session_id, _ = store.create("blackjack")
+        _, _, ts_before = store._sessions[session_id]
+        time.sleep(0.01)
+        store.get_state(session_id)
+        _, _, ts_after = store._sessions[session_id]
+        assert ts_after > ts_before
