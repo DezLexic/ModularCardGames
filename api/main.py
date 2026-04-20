@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -12,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+from slowapi.util import get_ipaddr
 
 from api.models import (
     ActionRequest,
@@ -31,9 +32,13 @@ from api.session import (
 )
 from core.registry import GameRegistry
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+_logger = logging.getLogger(__name__)
+
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=get_ipaddr)
 
 # ── Session store ─────────────────────────────────────────────────────────────
 
@@ -45,7 +50,10 @@ _store = SessionStore()
 async def _sweep_loop() -> None:
     while True:
         await asyncio.sleep(300)  # every 5 minutes
-        _store.sweep_expired()
+        try:
+            _store.sweep_expired()
+        except Exception:
+            _logger.exception("sweep_expired raised an unexpected error")
 
 
 @asynccontextmanager
@@ -67,6 +75,12 @@ _allowed_origins = [
     for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
     if o.strip()
 ]
+
+if "*" in _allowed_origins:
+    raise ValueError(
+        "ALLOWED_ORIGINS='*' is incompatible with allow_credentials=True. "
+        "Set explicit origins (e.g. https://yoursite.vercel.app) instead."
+    )
 
 app.add_middleware(
     CORSMiddleware,

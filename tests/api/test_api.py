@@ -10,9 +10,13 @@ from api.main import app, _store, limiter
 @pytest.fixture(autouse=True)
 def clear_store():
     _store._sessions.clear()
+    # limiter._storage is an internal slowapi attribute — reset to prevent
+    # rate-limit state from bleeding between tests
     limiter._storage.reset()
     yield
     _store._sessions.clear()
+    # limiter._storage is an internal slowapi attribute — reset to prevent
+    # rate-limit state from bleeding between tests
     limiter._storage.reset()
 
 
@@ -179,13 +183,19 @@ class TestCORS:
         )
         assert resp.status_code == 200
 
+    def test_cors_header_absent_for_disallowed_origin(self, client):
+        resp = client.get("/games", headers={"Origin": "https://evil.example.com"})
+        assert "access-control-allow-origin" not in resp.headers
+
 
 class TestSessionCap:
     def test_create_returns_503_when_cap_reached(self, client):
         from api.main import _store
         original_max = _store.MAX_SESSIONS
-        _store.MAX_SESSIONS = 1
-        client.post("/sessions", json={"game": "blackjack"})
-        resp = client.post("/sessions", json={"game": "blackjack"})
-        assert resp.status_code == 503
-        _store.MAX_SESSIONS = original_max
+        try:
+            _store.MAX_SESSIONS = 1
+            client.post("/sessions", json={"game": "blackjack"})
+            resp = client.post("/sessions", json={"game": "blackjack"})
+            assert resp.status_code == 503
+        finally:
+            _store.MAX_SESSIONS = original_max
