@@ -1,10 +1,18 @@
 from __future__ import annotations
 
-import games.blackjack  # noqa: F401 — triggers registration
+import asyncio
+import os
+from contextlib import asynccontextmanager
+
+import games.blackjack  # noqa: F401
 import games.texas_holdem  # noqa: F401
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from api.models import (
     ActionRequest,
@@ -23,17 +31,63 @@ from api.session import (
 )
 from core.registry import GameRegistry
 
-app = FastAPI(title="Modular Card Games API")
+# ── Rate limiter ──────────────────────────────────────────────────────────────
+
+limiter = Limiter(key_func=get_remote_address)
+
+# ── Session store ─────────────────────────────────────────────────────────────
+
 _store = SessionStore()
 
 
+# ── Background sweep ──────────────────────────────────────────────────────────
+
+async def _sweep_loop() -> None:
+    while True:
+        await asyncio.sleep(300)  # every 5 minutes
+        _store.sweep_expired()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_sweep_loop())
+    yield
+    task.cancel()
+
+
+# ── App ───────────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Modular Card Games API", lifespan=lifespan)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
 @app.get("/games", response_model=GamesResponse)
-def get_games() -> GamesResponse:
+@limiter.limit("120/minute")
+def get_games(request: Request) -> GamesResponse:
     return GamesResponse(games=GameRegistry.available())
 
 
 @app.post("/sessions", response_model=CreateSessionResponse, status_code=201)
-def create_session(body: CreateSessionRequest) -> CreateSessionResponse:
+@limiter.limit("10/minute")
+def create_session(request: Request, body: CreateSessionRequest) -> CreateSessionResponse:
     try:
         session_id, state = _store.create(body.game)
     except SessionCapError as e:
@@ -51,7 +105,8 @@ def create_session(body: CreateSessionRequest) -> CreateSessionResponse:
 
 
 @app.get("/sessions/{session_id}", response_model=GameStateResponse)
-def get_session(session_id: str) -> GameStateResponse:
+@limiter.limit("120/minute")
+def get_session(request: Request, session_id: str) -> GameStateResponse:
     try:
         game, state = _store.get_state(session_id)
     except SessionNotFoundError as e:
@@ -60,7 +115,8 @@ def get_session(session_id: str) -> GameStateResponse:
 
 
 @app.post("/sessions/{session_id}/action", response_model=GameStateResponse)
-def apply_action(session_id: str, body: ActionRequest) -> GameStateResponse:
+@limiter.limit("60/minute")
+def apply_action(request: Request, session_id: str, body: ActionRequest) -> GameStateResponse:
     try:
         game, state = _store.apply_action(session_id, body.action)
     except SessionNotFoundError as e:
@@ -71,7 +127,8 @@ def apply_action(session_id: str, body: ActionRequest) -> GameStateResponse:
 
 
 @app.delete("/sessions/{session_id}", status_code=204)
-def delete_session(session_id: str) -> Response:
+@limiter.limit("120/minute")
+def delete_session(request: Request, session_id: str) -> Response:
     try:
         _store.delete(session_id)
     except SessionNotFoundError as e:

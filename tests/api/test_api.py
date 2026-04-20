@@ -4,14 +4,16 @@ import games.texas_holdem  # noqa: F401
 
 from fastapi.testclient import TestClient
 
-from api.main import app, _store
+from api.main import app, _store, limiter
 
 
 @pytest.fixture(autouse=True)
 def clear_store():
     _store._sessions.clear()
+    limiter._storage.reset()
     yield
     _store._sessions.clear()
+    limiter._storage.reset()
 
 
 @pytest.fixture
@@ -158,3 +160,32 @@ class TestTexasHoldem:
         resp = client.post(f"/sessions/{session_id}/action", json={"action": "FOLD"})
         assert resp.json()["is_round_over"] is True
         assert resp.json()["result"]["outcome"] == "FOLD"
+
+
+class TestCORS:
+    def test_cors_header_present_for_allowed_origin(self, client):
+        resp = client.get("/games", headers={"Origin": "http://localhost:3000"})
+        assert resp.headers.get("access-control-allow-origin") in (
+            "http://localhost:3000", "*"
+        )
+
+    def test_preflight_returns_200(self, client):
+        resp = client.options(
+            "/sessions",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert resp.status_code == 200
+
+
+class TestSessionCap:
+    def test_create_returns_503_when_cap_reached(self, client):
+        from api.main import _store
+        original_max = _store.MAX_SESSIONS
+        _store.MAX_SESSIONS = 1
+        client.post("/sessions", json={"game": "blackjack"})
+        resp = client.post("/sessions", json={"game": "blackjack"})
+        assert resp.status_code == 503
+        _store.MAX_SESSIONS = original_max
