@@ -1,9 +1,10 @@
 import pytest
+import time
 import games.blackjack  # noqa: F401 — triggers registration
 import games.texas_holdem  # noqa: F401
 
 from core.types import Action
-from api.session import SessionStore, SessionNotFoundError, InvalidActionError, UnknownGameError
+from api.session import SessionStore, SessionNotFoundError, InvalidActionError, UnknownGameError, SessionCapError
 
 
 @pytest.fixture
@@ -77,3 +78,34 @@ class TestDelete:
     def test_delete_unknown_id_raises(self, store):
         with pytest.raises(SessionNotFoundError):
             store.delete("nonexistent-id")
+
+
+class TestTTLAndCap:
+    def test_sweep_removes_expired_sessions(self, store):
+        session_id, _ = store.create("blackjack")
+        game, state, _ = store._sessions[session_id]
+        store._sessions[session_id] = (game, state, time.monotonic() - store.SESSION_TTL_SECONDS - 1)
+        store.sweep_expired()
+        with pytest.raises(SessionNotFoundError):
+            store.get_state(session_id)
+
+    def test_sweep_keeps_fresh_sessions(self, store):
+        session_id, _ = store.create("blackjack")
+        store.sweep_expired()
+        game, state = store.get_state(session_id)
+        assert state is not None
+
+    def test_create_raises_when_cap_reached(self, store):
+        store.MAX_SESSIONS = 2
+        store.create("blackjack")
+        store.create("blackjack")
+        with pytest.raises(SessionCapError):
+            store.create("blackjack")
+
+    def test_apply_action_updates_last_accessed(self, store):
+        session_id, _ = store.create("blackjack")
+        _, _, ts_before = store._sessions[session_id]
+        time.sleep(0.01)
+        store.apply_action(session_id, "HIT")
+        _, _, ts_after = store._sessions[session_id]
+        assert ts_after > ts_before
